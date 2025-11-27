@@ -204,9 +204,9 @@ class SineGen(torch.nn.Module):
         :return: [B, 1, sample_len]
         """
 
-        F_mat = torch.zeros((f0.size(0), self.harmonic_num + 1, f0.size(-1))).to(f0.device)
-        for i in range(self.harmonic_num + 1):
-            F_mat[:, i: i + 1, :] = f0 * (i + 1) / self.sampling_rate
+        # Vectorized computation of harmonic frequencies
+        harmonics = torch.arange(1, self.harmonic_num + 2, device=f0.device, dtype=f0.dtype).view(1, -1, 1)
+        F_mat = f0 * harmonics / self.sampling_rate
 
         theta_mat = 2 * np.pi * (torch.cumsum(F_mat, dim=-1) % 1)
         u_dist = Uniform(low=-np.pi, high=np.pi)

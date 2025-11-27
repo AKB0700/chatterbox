@@ -105,11 +105,8 @@ class T3(nn.Module):
         if cond_emb.size(0) != text_emb.size(0):
              cond_emb = cond_emb.expand(text_emb.size(0), -1, -1)
 
-        # concat
-        embeds = torch.stack([
-            torch.cat((ce, te, se))
-            for ce, te, se in zip(cond_emb, text_emb, speech_emb)
-        ])  # (B, length, dim)
+        # concat - vectorized along batch dimension
+        embeds = torch.cat([cond_emb, text_emb, speech_emb], dim=1)  # (B, length, dim)
         return embeds, len_cond
 
     def forward(
@@ -315,7 +312,6 @@ class T3(nn.Module):
         # Instantiate the logits processors.
         top_p_warper = TopPLogitsWarper(top_p=top_p)
         min_p_warper = MinPLogitsWarper(min_p=min_p)
-        top_p_warper = TopPLogitsWarper(top_p=top_p)
         repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty))
 
         # ---- Initial Forward Pass (no kv_cache yet) ----
