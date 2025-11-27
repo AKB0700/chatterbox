@@ -14,18 +14,18 @@ This document identifies areas of slow or inefficient code in the Chatterbox TTS
 
 ## 1. Model Loading Optimizations
 
-### Issue: Redundant File Downloads in `from_pretrained`
+### Issue: Redundant File Downloads in `from_pretrained` ✅ FIXED
 **File:** `src/chatterbox/tts.py` (lines 177-180)
 
 ```python
-# Current implementation
+# Original implementation
 for fpath in ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]:
     local_path = hf_hub_download(repo_id=REPO_ID, filename=fpath)
 ```
 
 **Problem:** The loop downloads all files sequentially, but only the last `local_path` is used. This is inefficient and doesn't leverage the caching mechanism optimally.
 
-**Recommendation:** Use `snapshot_download` with `allow_patterns` instead:
+**Fix Applied:** Use `snapshot_download` with `allow_patterns` instead:
 
 ```python
 from huggingface_hub import snapshot_download
@@ -42,25 +42,19 @@ return cls.from_local(Path(ckpt_dir), device)
 
 ## 2. Inference Loop Optimizations
 
-### Issue: Duplicate LogitsWarper Instantiation
+### Issue: Duplicate LogitsWarper Instantiation ✅ FIXED
 **File:** `src/chatterbox/models/t3/t3.py` (lines 316-319)
 
 ```python
-# Current implementation - TopPLogitsWarper is instantiated twice
+# Original implementation - TopPLogitsWarper was instantiated twice
 top_p_warper = TopPLogitsWarper(top_p=top_p)
 min_p_warper = MinPLogitsWarper(min_p=min_p)
-top_p_warper = TopPLogitsWarper(top_p=top_p)  # Duplicate!
+top_p_warper = TopPLogitsWarper(top_p=top_p)  # Duplicate - REMOVED
 ```
 
-**Problem:** `TopPLogitsWarper` is instantiated twice, wasting memory and CPU cycles.
+**Problem:** `TopPLogitsWarper` was instantiated twice, wasting memory and CPU cycles.
 
-**Recommendation:** Remove the duplicate line:
-
-```python
-top_p_warper = TopPLogitsWarper(top_p=top_p)
-min_p_warper = MinPLogitsWarper(min_p=min_p)
-repetition_penalty_processor = RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty))
-```
+**Fix Applied:** Removed the duplicate line.
 
 ### Issue: Inefficient Tensor Concatenation in Loop
 **File:** `src/chatterbox/models/t3/t3.py` (lines 366-367)
@@ -113,11 +107,11 @@ def get_cached_pos_embedding(self, idx):
 
 ## 3. Memory Efficiency Improvements
 
-### Issue: Inefficient Loop for Tensor Operations
+### Issue: Inefficient Loop for Tensor Operations ✅ FIXED
 **File:** `src/chatterbox/models/t3/t3.py` (lines 109-112)
 
 ```python
-# Current implementation
+# Original implementation
 embeds = torch.stack([
     torch.cat((ce, te, se))
     for ce, te, se in zip(cond_emb, text_emb, speech_emb)
@@ -126,10 +120,10 @@ embeds = torch.stack([
 
 **Problem:** Using a list comprehension with `torch.cat` inside is inefficient for batched operations.
 
-**Recommendation:** Use vectorized operations:
+**Fix Applied:** Use vectorized operations:
 
 ```python
-# Improved implementation
+# Improved implementation - vectorized along batch dimension
 embeds = torch.cat([cond_emb, text_emb, speech_emb], dim=1)
 ```
 
@@ -302,11 +296,11 @@ mask_in[:] = mask
 # ... etc
 ```
 
-### Issue: Suboptimal SineGen Loop
+### Issue: Suboptimal SineGen Loop ✅ FIXED
 **File:** `src/chatterbox/models/s3gen/hifigan.py` (lines 206-209)
 
 ```python
-# Current implementation
+# Original implementation
 F_mat = torch.zeros((f0.size(0), self.harmonic_num + 1, f0.size(-1))).to(f0.device)
 for i in range(self.harmonic_num + 1):
     F_mat[:, i: i + 1, :] = f0 * (i + 1) / self.sampling_rate
@@ -314,27 +308,30 @@ for i in range(self.harmonic_num + 1):
 
 **Problem:** Loop-based tensor assignment can be vectorized.
 
-**Recommendation:** Use broadcasting for vectorization:
+**Fix Applied:** Pre-compute harmonics as a module buffer and use broadcasting:
 
 ```python
-# Vectorized implementation
-harmonics = torch.arange(1, self.harmonic_num + 2, device=f0.device).view(1, -1, 1)
-F_mat = f0 * harmonics / self.sampling_rate
+# In __init__:
+harmonics = torch.arange(1, harmonic_num + 2, dtype=torch.float32).view(1, -1, 1)
+self.register_buffer('harmonics', harmonics)
+
+# In forward:
+F_mat = f0 * self.harmonics / self.sampling_rate
 ```
 
 ---
 
 ## Summary of Priority Improvements
 
-| Priority | Issue | File | Impact |
+| Priority | Issue | File | Status |
 |----------|-------|------|--------|
-| HIGH | Duplicate TopPLogitsWarper | t3.py:317-318 | Minor CPU/memory waste |
-| HIGH | Tensor concat in loop | t3.py:366-367 | O(n²) memory overhead |
-| MEDIUM | Vectorizable embedding concat | t3.py:109-112 | Batch processing speed |
-| MEDIUM | Global mel basis state | mel.py:11-12 | Thread safety, lookup speed |
-| MEDIUM | Sequential resampling | voice_encoder.py:260-263 | Audio preprocessing speed |
-| LOW | SineGen vectorization | hifigan.py:206-209 | Minor inference speed |
-| LOW | Lazy import patterns | tokenizer.py:various | First-call latency |
+| HIGH | Duplicate TopPLogitsWarper | t3.py:317-318 | ✅ FIXED |
+| HIGH | Tensor concat in loop | t3.py:109-112 | ✅ FIXED (vectorized) |
+| MEDIUM | Sequential downloads | tts.py, vc.py | ✅ FIXED (snapshot_download) |
+| MEDIUM | SineGen vectorization | hifigan.py:206-209 | ✅ FIXED (with buffer) |
+| MEDIUM | Global mel basis state | mel.py:11-12 | 📝 Documented |
+| MEDIUM | Sequential resampling | voice_encoder.py:260-263 | 📝 Documented |
+| LOW | Lazy import patterns | tokenizer.py:various | 📝 Documented |
 
 ## Implementation Notes
 
