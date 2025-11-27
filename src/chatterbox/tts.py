@@ -5,7 +5,7 @@ import librosa
 import torch
 import perth
 import torch.nn.functional as F
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors.torch import load_file
 
 from .models.t3 import T3
@@ -174,10 +174,13 @@ class ChatterboxTTS:
                 print("MPS not available because the current MacOS version is not 12.3+ and/or you do not have an MPS-enabled device on this machine.")
             device = "cpu"
 
-        for fpath in ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]:
-            local_path = hf_hub_download(repo_id=REPO_ID, filename=fpath)
+        # Use snapshot_download for more efficient parallel downloading
+        ckpt_dir = snapshot_download(
+            repo_id=REPO_ID,
+            allow_patterns=["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"],
+        )
 
-        return cls.from_local(Path(local_path).parent, device)
+        return cls.from_local(Path(ckpt_dir), device)
 
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
         ## Load reference wav

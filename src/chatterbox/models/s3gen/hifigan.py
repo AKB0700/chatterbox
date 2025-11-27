@@ -191,6 +191,10 @@ class SineGen(torch.nn.Module):
         self.harmonic_num = harmonic_num
         self.sampling_rate = samp_rate
         self.voiced_threshold = voiced_threshold
+        
+        # Pre-compute harmonics multipliers as a buffer for efficiency
+        harmonics = torch.arange(1, harmonic_num + 2, dtype=torch.float32).view(1, -1, 1)
+        self.register_buffer('harmonics', harmonics)
 
     def _f02uv(self, f0):
         # generate uv signal
@@ -204,9 +208,8 @@ class SineGen(torch.nn.Module):
         :return: [B, 1, sample_len]
         """
 
-        F_mat = torch.zeros((f0.size(0), self.harmonic_num + 1, f0.size(-1))).to(f0.device)
-        for i in range(self.harmonic_num + 1):
-            F_mat[:, i: i + 1, :] = f0 * (i + 1) / self.sampling_rate
+        # Vectorized computation of harmonic frequencies using pre-computed buffer
+        F_mat = f0 * self.harmonics / self.sampling_rate
 
         theta_mat = 2 * np.pi * (torch.cumsum(F_mat, dim=-1) % 1)
         u_dist = Uniform(low=-np.pi, high=np.pi)
